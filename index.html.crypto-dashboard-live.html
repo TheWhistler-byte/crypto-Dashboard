@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crypto Market Dashboard (Live)</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--text:#14171c;--muted:#6b7480;--line:#e4e7ec;--up:#0f9d58;--down:#d93025;--btc:#f7931a;--eth:#627eea;--oth:#9aa4b2}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--card:#171b22;--text:#e8ebf0;--muted:#8b95a3;--line:#262c36;--up:#3ddc84;--down:#ff6b60}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1000px;margin:0 auto;padding:20px 16px 40px}
+header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+h1{font-size:22px;margin:0}
+.sub{color:var(--muted);font-size:13px}
+button{background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:13px}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin-bottom:12px}
+.two{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));margin-bottom:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+.label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.val{font-size:26px;font-weight:650;margin:6px 0 2px}
+.chg{font-size:13px;font-weight:600}
+.up{color:var(--up)}.down{color:var(--down)}
+h2{font-size:15px;margin:0 0 14px}
+.bar{display:flex;height:22px;border-radius:6px;overflow:hidden}
+.legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:13px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+.gauge{height:12px;border-radius:6px;background:linear-gradient(90deg,#d93025,#f6a623,#e8d44d,#7bc65a,#0f9d58);position:relative;margin:26px 0 10px}
+.pin{position:absolute;top:-8px;width:4px;height:28px;background:var(--text);border-radius:2px;transform:translateX(-2px)}
+.scale{display:flex;justify-content:space-between;color:var(--muted);font-size:11px}
+.scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:right;padding:10px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:500;font-size:12px}
+tr:last-child td{border-bottom:0}
+#err{color:var(--down);font-size:13px;margin-bottom:10px;display:none}
+.note{color:var(--muted);font-size:12px;margin-top:16px}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>Crypto Market Dashboard</h1>
+  <span><span class="sub" id="asof">Loading…</span> <button id="refresh">Refresh</button></span>
+</header>
+<div id="err"></div>
+<div class="grid" id="kpis"></div>
+<div class="two">
+  <div class="card"><h2>Market dominance</h2><div class="bar" id="dombar"></div><div class="legend" id="domleg"></div></div>
+  <div class="card"><h2>Fear &amp; Greed Index</h2>
+    <div class="val" id="fgval" style="margin-top:0">–</div>
+    <div class="gauge"><div class="pin" id="pin" style="left:50%"></div></div>
+    <div class="scale"><span>Extreme fear</span><span>Neutral</span><span>Extreme greed</span></div></div>
+</div>
+<div class="card">
+  <h2>Top 10 by market cap</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Asset</th><th>Price</th><th>24h</th><th>7d</th><th>Market cap</th><th>24h volume</th><th>From ATH</th></tr></thead>
+    <tbody id="rows"></tbody></table></div>
+</div>
+<p class="note">Data: CoinGecko (prices, market caps, dominance) and Alternative.me (Fear &amp; Greed). Auto-refreshes every 60 seconds. Not financial advice.</p>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const cls=c=>c>=0?"up":"down";
+const pct=c=>c==null?"–":(c>=0?"+":"")+c.toFixed(2)+"%";
+const usd=n=>n==null?"–":n>=1?"$"+n.toLocaleString("en-US",{maximumFractionDigits:2}):"$"+n.toPrecision(3);
+const big=n=>n>=1e12?"$"+(n/1e12).toFixed(2)+"T":n>=1e9?"$"+(n/1e9).toFixed(1)+"B":"$"+(n/1e6).toFixed(0)+"M";
+async function j(u){const r=await fetch(u);if(!r.ok)throw new Error(u.split("/")[2]+" returned "+r.status);return r.json()}
+
+async function load(){
+  $("err").style.display="none";
+  const [g,m,f]=await Promise.allSettled([
+    j("https://api.coingecko.com/api/v3/global"),
+    j("https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=10&page=1&price_change_percentage=24h,7d"),
+    j("https://api.alternative.me/fng/")
+  ]);
+  const errs=[];
+  if(g.status==="fulfilled"){
+    const d=g.value.data, btc=d.market_cap_percentage.btc, eth=d.market_cap_percentage.eth;
+    const ch=d.market_cap_change_percentage_24h_usd;
+    $("kpis").innerHTML=[
+      ["Total market cap",big(d.total_market_cap.usd),ch],
+      ["24h volume",big(d.total_volume.usd),null],
+      ["BTC dominance",btc.toFixed(1)+"%",null],
+      ["Active coins",d.active_cryptocurrencies.toLocaleString(),null]
+    ].map(k=>`<div class="card"><div class="label">${k[0]}</div><div class="val">${k[1]}</div><div class="chg ${k[2]==null?"":cls(k[2])}">${k[2]==null?"&nbsp;":pct(k[2])+" 24h"}</div></div>`).join("");
+    const oth=100-btc-eth;
+    $("dombar").innerHTML=[[btc,"--btc"],[eth,"--eth"],[oth,"--oth"]].map(x=>`<div style="width:${x[0]}%;background:var(${x[1]})"></div>`).join("");
+    $("domleg").innerHTML=[["Bitcoin",btc,"--btc"],["Ethereum",eth,"--eth"],["All others",oth,"--oth"]].map(x=>`<span><span class="dot" style="background:var(${x[2]})"></span>${x[0]} ${x[1].toFixed(1)}%</span>`).join("");
+  }else errs.push(g.reason.message);
+  if(m.status==="fulfilled"){
+    $("rows").innerHTML=m.value.map(c=>`<tr><td><b>${c.symbol.toUpperCase()}</b> <span class="sub">${c.name}</span></td><td>${usd(c.current_price)}</td><td class="${cls(c.price_change_percentage_24h_in_currency||0)}">${pct(c.price_change_percentage_24h_in_currency)}</td><td class="${cls(c.price_change_percentage_7d_in_currency||0)}">${pct(c.price_change_percentage_7d_in_currency)}</td><td>${big(c.market_cap)}</td><td>${big(c.total_volume)}</td><td class="${cls(c.ath_change_percentage)}">${pct(c.ath_change_percentage)}</td></tr>`).join("");
+  }else errs.push(m.reason.message);
+  if(f.status==="fulfilled"){
+    const x=f.value.data[0], v=+x.value;
+    $("fgval").textContent=v+" · "+x.value_classification;
+    $("pin").style.left=v+"%";
+  }else errs.push(f.reason.message);
+  if(errs.length){$("err").style.display="block";$("err").textContent="Some data failed to load ("+errs.join("; ")+"). The free CoinGecko API is rate limited, so wait a minute and press Refresh."}
+  $("asof").textContent="Updated "+new Date().toLocaleTimeString();
+}
+$("refresh").onclick=load;
+load();setInterval(load,60000);
+</script>
+</body>
+</html>
